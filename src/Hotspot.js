@@ -2,9 +2,7 @@ export class Hotspot {
 
     container;
 
-    constructor() {
-        let picture = new Image();
-        picture.src = "../img/hotspot.jpeg";
+    constructor(picture) {
 
         this.container = new createjs.Container();
         this.createBitmap(picture);
@@ -13,10 +11,8 @@ export class Hotspot {
     }
 
     createBitmap(picture) {
-
         let bitmap = new createjs.Bitmap(picture);
         this.container.addChild(bitmap);
-
         let shape = this.createShape(bitmap);
 
         bitmap.on("rollover", function() {

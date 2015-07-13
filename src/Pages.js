@@ -2,17 +2,22 @@ import {Hotspot} from './Hotspot.js';
 
 export class Pages {
 
-    static createPages(pictures) {
-        for (let i = 0; i < pictures.length; i++) {
-            Pages.createPage(pictures[i], i);
-        }
+    static createPages(pictures, callback) {
+        let picture = new Image();
+        picture.src = "img/hotspot.jpeg";
+        picture.onload = () => {
+            for (let i = 0; i < pictures.length; i++) {
+                Pages.createPage(pictures[i], i, picture);
+            }
+            stage.update();
+        };
     }
 
-    static createPage(src, i) {
+    static createPage(src, i, picture) {
         let container, hotspot;
         container = Pages.createPageContainer(src, i);
         for (let xyz = 0; xyz <= 50; xyz++) {
-            hotspot = new Hotspot();
+            hotspot = new Hotspot(picture);
             container.addChild(hotspot);
             Hotspot.setRandomPosition(hotspot);
         }
