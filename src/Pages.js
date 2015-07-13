@@ -16,7 +16,7 @@ export class Pages {
     static createPage(src, i, picture) {
         let container, hotspot;
         container = Pages.createPageContainer(src, i);
-        for (let xyz = 0; xyz <= 50; xyz++) {
+        for (let xyz = 0; xyz <= 250; xyz++) {
             hotspot = new Hotspot(picture);
             container.addChild(hotspot);
             Hotspot.setRandomPosition(hotspot);
@@ -32,8 +32,8 @@ export class Pages {
         let ratio = Math.min(window.innerWidth / picture.width, window.innerHeight / picture.height);
         let rectWidth = ratio * picture.width;
 
-        container.scaleX = window.innerWidth / picture.width;
         container.scaleY = window.innerHeight / picture.height;
+        container.scaleX = container.scaleY;
         container.x = (picture.width - rectWidth) * i;
         container.y = 0;
         container.addChild(bitmap);

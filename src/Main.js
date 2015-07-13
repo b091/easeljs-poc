@@ -25,8 +25,9 @@ export class Main {
 
         this.stage.enableMouseOver(20);
 
-        createjs.Ticker.timingMode = createjs.Ticker.RAF_SYNCHED;
-        createjs.Ticker.setFPS(30);
+        createjs.Ticker.timingMode = createjs.Ticker.RAF;
+        //createjs.Ticker.timingMode = createjs.Ticker.RAF_SYNCHED;
+        //createjs.Ticker.setFPS(30);
 
         createjs.Ticker.addEventListener("tick", this.onTick.bind(this));
 
