@@ -2,7 +2,7 @@ import {Hotspot} from './Hotspot.js';
 
 export class Pages {
 
-    static createPages(pictures, callback) {
+    static createPages(pictures) {
         let picture = new Image();
         picture.src = "img/hotspot.jpeg";
         picture.onload = () => {
