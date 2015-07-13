@@ -51,7 +51,7 @@ export class Main {
         this.pagesCount++;
         if (this.pagesCount >= this.pages.length) {
             Pages.createPages(this.pages);
-
+            stage.update();
         }
     }
 

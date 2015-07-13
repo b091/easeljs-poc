@@ -3,44 +3,45 @@ import {Hotspot} from './Hotspot.js';
 export class Pages {
 
     static createPages(pictures) {
-        let picture = new Image();
-        picture.src = "img/hotspot.jpeg";
-        picture.onload = () => {
-            for (let i = 0; i < pictures.length; i++) {
-                Pages.createPage(pictures[i], i, picture);
-            }
-            stage.update();
-        };
-    }
-
-    static createPage(src, i, picture) {
-        let container, hotspot;
-        container = Pages.createPageContainer(src, i);
-        for (let xyz = 0; xyz <= 250; xyz++) {
-            hotspot = new Hotspot(picture);
-            container.addChild(hotspot);
-            Hotspot.setRandomPosition(hotspot);
+        for (let index = 0; index < pictures.length; index++) {
+            stage.addChild(Pages.createPage(pictures[index], index));
         }
-        stage.addChild(container);
     }
 
+    static createPage(src, index) {
+        let container = Pages.createPageContainer(src, index);
+        container.addChild(new createjs.Bitmap(src));
 
-    static createPageContainer(picture, i) {
-
-        let container = new createjs.Container();
-        let bitmap = new createjs.Bitmap(picture);
-        let ratio = Math.min(window.innerWidth / picture.width, window.innerHeight / picture.height);
-        let rectWidth = ratio * picture.width;
-
-        container.scaleY = window.innerHeight / picture.height;
-        container.scaleX = container.scaleY;
-        container.x = (picture.width - rectWidth) * i;
-        container.y = 0;
-        container.addChild(bitmap);
+        for (let xyz = 0; xyz <= 50; xyz++) {
+            Pages.createHotSpot(container);
+        }
 
         return container;
     }
 
+    static createHotSpot(container) {
+        let picture = new Image();
+        let index = Math.floor(Math.random() * 3) + 1;
+        picture.src = "img/hotspot_" + index + ".jpeg";
+        picture.onload = () => {
+            let hotspot = new Hotspot(picture);
+            container.addChild(hotspot);
+            Hotspot.setRandomPosition(hotspot);
+            stage.update();
+        };
+    }
+
+    static createPageContainer(picture, index) {
+        let container = new createjs.Container();
+        let ratio = Math.min(window.innerWidth / picture.width, window.innerHeight / picture.height);
+        let rectWidth = ratio * picture.width;
+
+        container.scaleX = container.scaleY = window.innerHeight / picture.height;
+        container.x = (picture.width - rectWidth) * index;
+        container.y = 0;
+
+        return container;
+    }
 
 }
 
