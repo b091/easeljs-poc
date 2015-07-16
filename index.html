@@ -1,21 +1,15 @@
 <html>
 <head>
     <link type="text/css" rel="stylesheet" href="style/main.css" media="all">
-    <!--<script src="https://code.createjs.com/easeljs-0.8.1.min.js"></script>-->
-
     <script src="jspm_packages/system.js"></script>
     <script src="config.js"></script>
-
     <script>
         System.import('src/Main').then(function(pkg) {
-            console.log(new pkg.Main());
+            new pkg.Main(document.getElementById('demoCanvas'));
         });
     </script>
-
 </head>
-
 <body>
-<canvas id="demoCanvas" width="1200" height="600"></canvas>
+    <canvas id="demoCanvas" width="1200" height="600"></canvas>
 </body>
-
 </html>

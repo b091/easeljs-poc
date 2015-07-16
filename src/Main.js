@@ -9,15 +9,26 @@ export class Main {
     canvas;
     stage;
     pagesCount;
-    animate;
-    halfCanvasWidth;
-    halfCanvasWidthByTen;
 
-    constructor() {
-
-        this.canvas = document.getElementById('demoCanvas');
+    constructor(canvas) {
+        this.canvas = canvas;
         this.canvas.onmousemove = this.onMouseMove.bind(this);
+        this.stage = new createjs.Stage(this.canvas);
+        this.pages = new Array(6);
+        this.pagesCount = 0;
+        this.stage.enableMouseOver(20);
 
+        createjs.Ticker.timingMode = createjs.Ticker.RAF;
+        createjs.Ticker.setFPS(30);
+        createjs.Ticker.addEventListener("tick", this.stage);
+
+        window.stage = this.stage;
+
+        this.initHammer();
+        this.loadPages();
+    }
+
+    initHammer(){
         var mc = new Hammer.Manager(this.canvas, {
             recognizers: [
                 [Hammer.Swipe], [Hammer.Tap], [Hammer.Pan], [Hammer.Pinch]
@@ -28,23 +39,6 @@ export class Main {
         mc.on('pan', this.onPan.bind(this));
         mc.on('panend', this.onPanEnd.bind(this));
         mc.on('tap', this.onTap.bind(this));
-        
-        this.stage = new createjs.Stage(this.canvas);
-
-        this.pages = new Array(6);
-        this.pagesCount = 0;
-        this.animate = false;
-        this.stage.enableMouseOver(20);
-
-        createjs.Ticker.timingMode = createjs.Ticker.RAF;
-        //createjs.Ticker.timingMode = createjs.Ticker.RAF_SYNCHED;
-
-        createjs.Ticker.setFPS(30);
-        createjs.Ticker.addEventListener("tick", this.stage);
-
-        window.stage = this.stage;
-
-        this.loadPages();
     }
 
     loadPages() {
