@@ -1,5 +1,7 @@
 import {EaselJS} from 'EaselJS';
+import {TweenJS} from 'TweenJS';
 import {Pages} from './Pages';
+import * as Hammer from 'hammer';
 
 export class Main {
 
@@ -15,25 +17,31 @@ export class Main {
 
         this.canvas = document.getElementById('demoCanvas');
         this.canvas.onmousemove = this.onMouseMove.bind(this);
+
+        var mc = new Hammer.Manager(this.canvas, {
+            recognizers: [
+                [Hammer.Swipe], [Hammer.Tap], [Hammer.Pan], [Hammer.Pinch]
+            ]
+        });
+
+        mc.on('swipe', this.onSwipe.bind(this));
+        mc.on('pan', this.onPan.bind(this));
+        mc.on('panend', this.onPanEnd.bind(this));
+        mc.on('tap', this.onTap.bind(this));
+        
         this.stage = new createjs.Stage(this.canvas);
 
         this.pages = new Array(6);
         this.pagesCount = 0;
         this.animate = false;
-        this.halfCanvasWidth = this.canvas.width / 2;
-        this.halfCanvasWidthByTen = this.halfCanvasWidth / 10;
-
         this.stage.enableMouseOver(20);
 
         createjs.Ticker.timingMode = createjs.Ticker.RAF;
         //createjs.Ticker.timingMode = createjs.Ticker.RAF_SYNCHED;
-        //createjs.Ticker.setFPS(30);
 
-        createjs.Ticker.addEventListener("tick", this.onTick.bind(this));
+        createjs.Ticker.setFPS(30);
+        createjs.Ticker.addEventListener("tick", this.stage);
 
-        document.addEventListener("click", () => {
-            this.animate = !this.animate;
-        });
         window.stage = this.stage;
 
         this.loadPages();
@@ -49,23 +57,37 @@ export class Main {
 
     onImageLoad() {
         this.pagesCount++;
-        if (this.pagesCount >= this.pages.length) {
+        if (this.pagesCount >=  this.pages.length) {
             Pages.createPages(this.pages);
             stage.update();
         }
     }
 
-    onTick() {
-        if (this.animate === false) {
-            return;
-        }
-        let direction = (this.stage.mouseX - this.halfCanvasWidth) / this.halfCanvasWidthByTen;
+    onSwipe(ev) {
+    }
+    
+    onPanEnd(ev){
         for (let i = 0; i < this.pages.length; i++) {
             if (this.stage.children[i]) {
-                this.stage.children[i].x = this.stage.children[i].x - direction; // - pictures[i].width;
+                this.stage.children[i].orgX = this.stage.children[i].x;
             }
         }
-        this.stage.update();
+    }
+    
+    onPan(ev){
+        for (let i = 0; i < this.pages.length; i++) {
+            if (this.stage.children[i]) {
+                let x = this.stage.children[i].orgX + ev.deltaX;
+                createjs.Tween.get(this.stage.children[i])
+                    .to({ x: x });
+            }
+        }
+    }
+
+    onTap(ev) {
+    }
+
+    onClick(ev){
     }
 
     onMouseMove(e) {

@@ -39,7 +39,8 @@ export class Pages {
         container.scaleX = container.scaleY = window.innerHeight / picture.height;
         container.x = (picture.width - rectWidth) * index;
         container.y = 0;
-
+        container.orgX = container.x;
+        container.orgY = container.Y;
         return container;
     }
 
