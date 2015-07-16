@@ -9,26 +9,34 @@ export class Main {
     canvas;
     stage;
     pagesCount;
+    globalContainer;
 
     constructor(canvas) {
-        this.canvas = canvas;
-        this.canvas.onmousemove = this.onMouseMove.bind(this);
-        this.stage = new createjs.Stage(this.canvas);
+
         this.pages = new Array(6);
         this.pagesCount = 0;
+
+        this.canvas = canvas;
+        this.canvas.onmousemove = this.onMouseMove.bind(this);
+
+        this.stage = new createjs.Stage(this.canvas);
         this.stage.enableMouseOver(20);
+        window.stage = this.stage;
+
+        this.globalContainer = new createjs.Container();
+        this.globalContainer.x = 0;
+        this.globalContainer.y = 0;
+        this.globalContainer.orgX = this.globalContainer.x;
 
         createjs.Ticker.timingMode = createjs.Ticker.RAF;
         createjs.Ticker.setFPS(30);
         createjs.Ticker.addEventListener("tick", this.stage);
 
-        window.stage = this.stage;
-
         this.initHammer();
         this.loadPages();
     }
 
-    initHammer(){
+    initHammer() {
         var mc = new Hammer.Manager(this.canvas, {
             recognizers: [
                 [Hammer.Swipe], [Hammer.Tap], [Hammer.Pan], [Hammer.Pinch]
@@ -51,37 +59,32 @@ export class Main {
 
     onImageLoad() {
         this.pagesCount++;
-        if (this.pagesCount >=  this.pages.length) {
-            Pages.createPages(this.pages);
+        if (this.pagesCount >= this.pages.length) {
+            let pages = Pages.createPages(this.pages, this.globalContainer);
+            for (let i = 0; i < pages.length; i++) {
+                this.globalContainer.addChild(pages[i]);
+            }
+            stage.addChild(this.globalContainer);
             stage.update();
         }
     }
 
     onSwipe(ev) {
     }
-    
-    onPanEnd(ev){
-        for (let i = 0; i < this.pages.length; i++) {
-            if (this.stage.children[i]) {
-                this.stage.children[i].orgX = this.stage.children[i].x;
-            }
-        }
+
+    onPanEnd(ev) {
+        this.globalContainer.orgX = this.globalContainer.x;
     }
-    
-    onPan(ev){
-        for (let i = 0; i < this.pages.length; i++) {
-            if (this.stage.children[i]) {
-                let x = this.stage.children[i].orgX + ev.deltaX;
-                createjs.Tween.get(this.stage.children[i])
-                    .to({ x: x });
-            }
-        }
+
+    onPan(ev) {
+        let x = this.globalContainer.orgX + ev.deltaX;
+        createjs.Tween.get(this.globalContainer).to({x: x});
     }
 
     onTap(ev) {
     }
 
-    onClick(ev){
+    onClick(ev) {
     }
 
     onMouseMove(e) {

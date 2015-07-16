@@ -3,20 +3,22 @@ import {Hotspot} from './Hotspot.js';
 export class Pages {
 
     static createPages(pictures) {
+        let pages = [];
         for (let index = 0; index < pictures.length; index++) {
-            stage.addChild(Pages.createPage(pictures[index], index));
+            pages.push(Pages.createPage(pictures[index], index));
         }
+        return pages;
     }
 
     static createPage(src, index) {
-        let container = Pages.createPageContainer(src, index);
-        container.addChild(new createjs.Bitmap(src));
+        let pageContainer = Pages.createPageContainer(src, index);
+        pageContainer.addChild(new createjs.Bitmap(src));
 
         for (let xyz = 0; xyz <= 50; xyz++) {
-            Pages.createHotSpot(container);
+            Pages.createHotSpot(pageContainer);
         }
 
-        return container;
+        return pageContainer;
     }
 
     static createHotSpot(container) {
@@ -32,16 +34,15 @@ export class Pages {
     }
 
     static createPageContainer(picture, index) {
-        let container = new createjs.Container();
+        let pageContainer = new createjs.Container();
         let ratio = Math.min(window.innerWidth / picture.width, window.innerHeight / picture.height);
         let rectWidth = ratio * picture.width;
 
-        container.scaleX = container.scaleY = window.innerHeight / picture.height;
-        container.x = (picture.width - rectWidth) * index;
-        container.y = 0;
-        container.orgX = container.x;
-        container.orgY = container.Y;
-        return container;
+        pageContainer.scaleX = pageContainer.scaleY = window.innerHeight / picture.height;
+        pageContainer.x = (picture.width - rectWidth) * index;
+        pageContainer.y = 0;
+
+        return pageContainer;
     }
 
 }
