@@ -20,7 +20,6 @@ export class Main {
         this.canvas.onmousemove = this.onMouseMove.bind(this);
 
         this.stage = new createjs.Stage(this.canvas);
-        this.stage.enableMouseOver(20);
         window.stage = this.stage;
 
         this.globalContainer = new createjs.Container();
@@ -28,6 +27,7 @@ export class Main {
         this.globalContainer.y = 0;
         this.globalContainer.orgX = this.globalContainer.x;
 
+        createjs.Touch.enable(this.stage);
         createjs.Ticker.timingMode = createjs.Ticker.RAF;
         createjs.Ticker.setFPS(30);
         createjs.Ticker.addEventListener("tick", this.stage);
@@ -60,16 +60,20 @@ export class Main {
     onImageLoad() {
         this.pagesCount++;
         if (this.pagesCount >= this.pages.length) {
-            let pages = Pages.createPages(this.pages, this.globalContainer);
-            for (let i = 0; i < pages.length; i++) {
-                this.globalContainer.addChild(pages[i]);
-            }
-            stage.addChild(this.globalContainer);
-            stage.update();
-        }
-    }
+            let elementsLoaded = 0;
+            let pages = Pages.createPages(this.pages, () => {
+                elementsLoaded++;
+                if (elementsLoaded === 306) {
+                    for (let i = 0; i < pages.length; i++) {
+                        pages[i].cache(0, 0, 1862, 1862);
+                        this.globalContainer.addChild(pages[i]);
+                    }
+                    stage.addChild(this.globalContainer);
+                    stage.update();
+                }
+            });
 
-    onSwipe(ev) {
+        }
     }
 
     onPanEnd(ev) {
@@ -79,6 +83,9 @@ export class Main {
     onPan(ev) {
         let x = this.globalContainer.orgX + ev.deltaX;
         createjs.Tween.get(this.globalContainer).to({x: x});
+    }
+
+    onSwipe(ev) {
     }
 
     onTap(ev) {

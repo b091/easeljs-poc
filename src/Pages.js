@@ -2,26 +2,26 @@ import {Hotspot} from './Hotspot.js';
 
 export class Pages {
 
-    static createPages(pictures) {
+    static createPages(pictures, callback) {
         let pages = [];
         for (let index = 0; index < pictures.length; index++) {
-            pages.push(Pages.createPage(pictures[index], index));
+            pages.push(Pages.createPage(pictures[index], index, callback));
         }
         return pages;
     }
 
-    static createPage(src, index) {
+    static createPage(src, index, callback) {
         let pageContainer = Pages.createPageContainer(src, index);
         pageContainer.addChild(new createjs.Bitmap(src));
 
         for (let xyz = 0; xyz <= 50; xyz++) {
-            Pages.createHotSpot(pageContainer);
+            Pages.createHotSpot(pageContainer, callback);
         }
 
         return pageContainer;
     }
 
-    static createHotSpot(container) {
+    static createHotSpot(container, callback) {
         let picture = new Image();
         let index = Math.floor(Math.random() * 3) + 1;
         picture.src = "img/hotspot_" + index + ".jpeg";
@@ -29,7 +29,7 @@ export class Pages {
             let hotspot = new Hotspot(picture);
             container.addChild(hotspot);
             Hotspot.setRandomPosition(hotspot);
-            stage.update();
+            callback();
         };
     }
 
