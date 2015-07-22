@@ -5,11 +5,11 @@
     <script src="config.js"></script>
     <script>
         System.import('src/Main').then(function(pkg) {
-            new pkg.Main(document.getElementById('demoCanvas'));
+            new pkg.Main(pkg.initCanvas());
         });
     </script>
 </head>
 <body>
-    <canvas id="demoCanvas" width="1200" height="600"></canvas>
+<canvas id="demoCanvas" width="100" height="100"></canvas>
 </body>
 </html>

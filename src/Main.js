@@ -103,3 +103,11 @@ export class Main {
     }
 
 }
+
+
+export function initCanvas() {
+    var canvasElement = document.getElementById('demoCanvas');
+    canvasElement.width = window.innerWidth;
+    canvasElement.height = window.innerHeight;
+    return canvasElement;
+}

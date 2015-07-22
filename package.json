@@ -11,8 +11,8 @@
   "jspm": {
     "directories": {},
     "dependencies": {
-      "TweenJS": "github:CreateJS/TweenJS@^0.6.1",
       "EaselJS": "github:CreateJS/EaselJS@^0.8.1",
+      "TweenJS": "github:CreateJS/TweenJS@^0.6.1",
       "hammer": "github:hammerjs/hammer.js@^2.0.4"
     },
     "devDependencies": {

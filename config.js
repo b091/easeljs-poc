@@ -15,8 +15,8 @@ System.config({
 
 System.config({
   "map": {
-    "TweenJS": "github:CreateJS/TweenJS@0.6.1",
     "EaselJS": "github:CreateJS/EaselJS@0.8.1",
+    "TweenJS": "github:CreateJS/TweenJS@0.6.1",
     "babel": "npm:babel-core@5.6.17",
     "babel-runtime": "npm:babel-runtime@5.6.17",
     "core-js": "npm:core-js@0.9.18",

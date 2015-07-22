@@ -1,4 +1,4 @@
-import {Hotspot} from './Hotspot.js';
+import {Hotspot} from './Hotspot';
 
 export class Pages {
 
@@ -35,11 +35,12 @@ export class Pages {
 
     static createPageContainer(picture, index) {
         let pageContainer = new createjs.Container();
-        let ratio = Math.min(window.innerWidth / picture.width, window.innerHeight / picture.height);
+        let innerWidth =  window.innerWidth / 2; // double page
+        let ratio = Math.min(innerWidth / picture.width, window.innerHeight / picture.height);
         let rectWidth = ratio * picture.width;
 
         pageContainer.scaleX = pageContainer.scaleY = window.innerHeight / picture.height;
-        pageContainer.x = (picture.width - rectWidth) * index;
+        pageContainer.x = (rectWidth + 10) * index;
         pageContainer.y = 0;
 
         return pageContainer;
