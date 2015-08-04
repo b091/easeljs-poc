@@ -2,6 +2,7 @@ import {EaselJS} from 'EaselJS';
 import {TweenJS} from 'TweenJS';
 import {Pages} from './Pages';
 import * as Hammer from 'hammer';
+import {Statistics} from './Statistics'
 
 export class Main {
 
@@ -12,6 +13,8 @@ export class Main {
     globalContainer;
 
     constructor(canvas) {
+
+        new Statistics();
 
         this.pages = new Array(6);
         this.pagesCount = 0;
@@ -37,9 +40,9 @@ export class Main {
     }
 
     initHammer() {
-        var mc = new Hammer.Manager(this.canvas, {
+        var mc = new Hammer.default.Manager(this.canvas, {
             recognizers: [
-                [Hammer.Swipe], [Hammer.Tap], [Hammer.Pan], [Hammer.Pinch]
+                [Hammer.default.Swipe], [Hammer.default.Tap], [Hammer.default.Pan], [Hammer.default.Pinch]
             ]
         });
 

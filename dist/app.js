@@ -1,722 +1,6 @@
-(function(global) {
-
-  var defined = {};
-
-  // indexOf polyfill for IE8
-  var indexOf = Array.prototype.indexOf || function(item) {
-    for (var i = 0, l = this.length; i < l; i++)
-      if (this[i] === item)
-        return i;
-    return -1;
-  }
-
-  function dedupe(deps) {
-    var newDeps = [];
-    for (var i = 0, l = deps.length; i < l; i++)
-      if (indexOf.call(newDeps, deps[i]) == -1)
-        newDeps.push(deps[i])
-    return newDeps;
-  }
-
-  function register(name, deps, declare) {
-    if (arguments.length === 4)
-      return registerDynamic.apply(this, arguments);
-    doRegister(name, {
-      declarative: true,
-      deps: deps,
-      declare: declare
-    });
-  }
-
-  function registerDynamic(name, deps, executingRequire, execute) {
-    doRegister(name, {
-      declarative: false,
-      deps: deps,
-      executingRequire: executingRequire,
-      execute: execute
-    });
-  }
-
-  function doRegister(name, entry) {
-    entry.name = name;
-
-    // we never overwrite an existing define
-    if (!(name in defined))
-      defined[name] = entry; 
-
-    entry.deps = dedupe(entry.deps);
-
-    // we have to normalize dependencies
-    // (assume dependencies are normalized for now)
-    // entry.normalizedDeps = entry.deps.map(normalize);
-    entry.normalizedDeps = entry.deps;
-  }
-
-
-  function buildGroups(entry, groups) {
-    groups[entry.groupIndex] = groups[entry.groupIndex] || [];
-
-    if (indexOf.call(groups[entry.groupIndex], entry) != -1)
-      return;
-
-    groups[entry.groupIndex].push(entry);
-
-    for (var i = 0, l = entry.normalizedDeps.length; i < l; i++) {
-      var depName = entry.normalizedDeps[i];
-      var depEntry = defined[depName];
-
-      // not in the registry means already linked / ES6
-      if (!depEntry || depEntry.evaluated)
-        continue;
-
-      // now we know the entry is in our unlinked linkage group
-      var depGroupIndex = entry.groupIndex + (depEntry.declarative != entry.declarative);
-
-      // the group index of an entry is always the maximum
-      if (depEntry.groupIndex === undefined || depEntry.groupIndex < depGroupIndex) {
-
-        // if already in a group, remove from the old group
-        if (depEntry.groupIndex !== undefined) {
-          groups[depEntry.groupIndex].splice(indexOf.call(groups[depEntry.groupIndex], depEntry), 1);
-
-          // if the old group is empty, then we have a mixed depndency cycle
-          if (groups[depEntry.groupIndex].length == 0)
-            throw new TypeError("Mixed dependency cycle detected");
-        }
-
-        depEntry.groupIndex = depGroupIndex;
-      }
-
-      buildGroups(depEntry, groups);
-    }
-  }
-
-  function link(name) {
-    var startEntry = defined[name];
-
-    startEntry.groupIndex = 0;
-
-    var groups = [];
-
-    buildGroups(startEntry, groups);
-
-    var curGroupDeclarative = !!startEntry.declarative == groups.length % 2;
-    for (var i = groups.length - 1; i >= 0; i--) {
-      var group = groups[i];
-      for (var j = 0; j < group.length; j++) {
-        var entry = group[j];
-
-        // link each group
-        if (curGroupDeclarative)
-          linkDeclarativeModule(entry);
-        else
-          linkDynamicModule(entry);
-      }
-      curGroupDeclarative = !curGroupDeclarative; 
-    }
-  }
-
-  // module binding records
-  var moduleRecords = {};
-  function getOrCreateModuleRecord(name) {
-    return moduleRecords[name] || (moduleRecords[name] = {
-      name: name,
-      dependencies: [],
-      exports: {}, // start from an empty module and extend
-      importers: []
-    })
-  }
-
-  function linkDeclarativeModule(entry) {
-    // only link if already not already started linking (stops at circular)
-    if (entry.module)
-      return;
-
-    var module = entry.module = getOrCreateModuleRecord(entry.name);
-    var exports = entry.module.exports;
-
-    var declaration = entry.declare.call(global, function(name, value) {
-      module.locked = true;
-      exports[name] = value;
-
-      for (var i = 0, l = module.importers.length; i < l; i++) {
-        var importerModule = module.importers[i];
-        if (!importerModule.locked) {
-          var importerIndex = indexOf.call(importerModule.dependencies, module);
-          importerModule.setters[importerIndex](exports);
-        }
-      }
-
-      module.locked = false;
-      return value;
-    });
-
-    module.setters = declaration.setters;
-    module.execute = declaration.execute;
-
-    // now link all the module dependencies
-    for (var i = 0, l = entry.normalizedDeps.length; i < l; i++) {
-      var depName = entry.normalizedDeps[i];
-      var depEntry = defined[depName];
-      var depModule = moduleRecords[depName];
-
-      // work out how to set depExports based on scenarios...
-      var depExports;
-
-      if (depModule) {
-        depExports = depModule.exports;
-      }
-      else if (depEntry && !depEntry.declarative) {
-        depExports = depEntry.esModule;
-      }
-      // in the module registry
-      else if (!depEntry) {
-        depExports = load(depName);
-      }
-      // we have an entry -> link
-      else {
-        linkDeclarativeModule(depEntry);
-        depModule = depEntry.module;
-        depExports = depModule.exports;
-      }
-
-      // only declarative modules have dynamic bindings
-      if (depModule && depModule.importers) {
-        depModule.importers.push(module);
-        module.dependencies.push(depModule);
-      }
-      else
-        module.dependencies.push(null);
-
-      // run the setter for this dependency
-      if (module.setters[i])
-        module.setters[i](depExports);
-    }
-  }
-
-  // An analog to loader.get covering execution of all three layers (real declarative, simulated declarative, simulated dynamic)
-  function getModule(name) {
-    var exports;
-    var entry = defined[name];
-
-    if (!entry) {
-      exports = load(name);
-      if (!exports)
-        throw new Error("Unable to load dependency " + name + ".");
-    }
-
-    else {
-      if (entry.declarative)
-        ensureEvaluated(name, []);
-
-      else if (!entry.evaluated)
-        linkDynamicModule(entry);
-
-      exports = entry.module.exports;
-    }
-
-    if ((!entry || entry.declarative) && exports && exports.__useDefault)
-      return exports['default'];
-
-    return exports;
-  }
-
-  function linkDynamicModule(entry) {
-    if (entry.module)
-      return;
-
-    var exports = {};
-
-    var module = entry.module = { exports: exports, id: entry.name };
-
-    // AMD requires execute the tree first
-    if (!entry.executingRequire) {
-      for (var i = 0, l = entry.normalizedDeps.length; i < l; i++) {
-        var depName = entry.normalizedDeps[i];
-        var depEntry = defined[depName];
-        if (depEntry)
-          linkDynamicModule(depEntry);
-      }
-    }
-
-    // now execute
-    entry.evaluated = true;
-    var output = entry.execute.call(global, function(name) {
-      for (var i = 0, l = entry.deps.length; i < l; i++) {
-        if (entry.deps[i] != name)
-          continue;
-        return getModule(entry.normalizedDeps[i]);
-      }
-      throw new TypeError('Module ' + name + ' not declared as a dependency.');
-    }, exports, module);
-
-    if (output)
-      module.exports = output;
-
-    // create the esModule object, which allows ES6 named imports of dynamics
-    exports = module.exports;
- 
-    if (exports && exports.__esModule) {
-      entry.esModule = exports;
-    }
-    else {
-      var hasOwnProperty = exports && exports.hasOwnProperty;
-      entry.esModule = {};
-      for (var p in exports) {
-        if (!hasOwnProperty || exports.hasOwnProperty(p))
-          entry.esModule[p] = exports[p];
-      }
-      entry.esModule['default'] = exports;
-      entry.esModule.__useDefault = true;
-    }
-  }
-
-  /*
-   * Given a module, and the list of modules for this current branch,
-   *  ensure that each of the dependencies of this module is evaluated
-   *  (unless one is a circular dependency already in the list of seen
-   *  modules, in which case we execute it)
-   *
-   * Then we evaluate the module itself depth-first left to right 
-   * execution to match ES6 modules
-   */
-  function ensureEvaluated(moduleName, seen) {
-    var entry = defined[moduleName];
-
-    // if already seen, that means it's an already-evaluated non circular dependency
-    if (!entry || entry.evaluated || !entry.declarative)
-      return;
-
-    // this only applies to declarative modules which late-execute
-
-    seen.push(moduleName);
-
-    for (var i = 0, l = entry.normalizedDeps.length; i < l; i++) {
-      var depName = entry.normalizedDeps[i];
-      if (indexOf.call(seen, depName) == -1) {
-        if (!defined[depName])
-          load(depName);
-        else
-          ensureEvaluated(depName, seen);
-      }
-    }
-
-    if (entry.evaluated)
-      return;
-
-    entry.evaluated = true;
-    entry.module.execute.call(global);
-  }
-
-  // magical execution function
-  var modules = {};
-  function load(name) {
-    if (modules[name])
-      return modules[name];
-
-    var entry = defined[name];
-
-    // first we check if this module has already been defined in the registry
-    if (!entry)
-      throw "Module " + name + " not present.";
-
-    // recursively ensure that the module and all its 
-    // dependencies are linked (with dependency group handling)
-    link(name);
-
-    // now handle dependency execution in correct order
-    ensureEvaluated(name, []);
-
-    // remove from the registry
-    defined[name] = undefined;
-
-    // return the defined module object
-    return modules[name] = entry.declarative ? entry.module.exports : entry.esModule;
-  };
-
-  return function(mains, declare) {
-    return function(formatDetect) {
-      formatDetect(function() {
-        var System = {
-          _nodeRequire: typeof require != 'undefined' && require.resolve && typeof process != 'undefined' && require,
-          register: register,
-          registerDynamic: registerDynamic,
-          get: load, 
-          set: function(name, module) {
-            modules[name] = module; 
-          },
-          newModule: function(module) {
-            return module;
-          },
-          'import': function() {
-            throw new TypeError('Dynamic System.import calls are not supported for SFX bundles. Rather use a named bundle.');
-          }
-        };
-        System.set('@empty', {});
-
-        declare(System);
-
-        var firstLoad = load(mains[0]);
-        if (mains.length > 1)
-          for (var i = 1; i < mains.length; i++)
-            load(mains[i]);
-
-        return firstLoad;
-      });
-    };
-  };
-
-})(typeof self != 'undefined' ? self : global)
-/* (['mainModule'], function(System) {
-  System.register(...);
-})
-(function(factory) {
-  if (typeof define && define.amd)
-    define(factory);
-  // etc UMD / module pattern
-})*/
-
-(['src/App.js'], function(System) {
-
-(function(__global) {
-  var loader = System;
-  var indexOf = Array.prototype.indexOf || function(item) {
-    for (var i = 0, l = this.length; i < l; i++)
-      if (this[i] === item)
-        return i;
-    return -1;
-  }
-
-  var commentRegEx = /(\/\*([\s\S]*?)\*\/|([^:]|^)\/\/(.*)$)/mg;
-  var cjsRequirePre = "(?:^|[^$_a-zA-Z\\xA0-\\uFFFF.])";
-  var cjsRequirePost = "\\s*\\(\\s*(\"([^\"]+)\"|'([^']+)')\\s*\\)";
-  var fnBracketRegEx = /\(([^\)]*)\)/;
-  var wsRegEx = /^\s+|\s+$/g;
-  
-  var requireRegExs = {};
-
-  function getCJSDeps(source, requireIndex) {
-
-    // remove comments
-    source = source.replace(commentRegEx, '');
-
-    // determine the require alias
-    var params = source.match(fnBracketRegEx);
-    var requireAlias = (params[1].split(',')[requireIndex] || 'require').replace(wsRegEx, '');
-
-    // find or generate the regex for this requireAlias
-    var requireRegEx = requireRegExs[requireAlias] || (requireRegExs[requireAlias] = new RegExp(cjsRequirePre + requireAlias + cjsRequirePost, 'g'));
-
-    requireRegEx.lastIndex = 0;
-
-    var deps = [];
-
-    var match;
-    while (match = requireRegEx.exec(source))
-      deps.push(match[2] || match[3]);
-
-    return deps;
-  }
-
-  /*
-    AMD-compatible require
-    To copy RequireJS, set window.require = window.requirejs = loader.amdRequire
-  */
-  function require(names, callback, errback, referer) {
-    // in amd, first arg can be a config object... we just ignore
-    if (typeof names == 'object' && !(names instanceof Array))
-      return require.apply(null, Array.prototype.splice.call(arguments, 1, arguments.length - 1));
-
-    // amd require
-    if (typeof names == 'string' && typeof callback == 'function')
-      names = [names];
-    if (names instanceof Array) {
-      var dynamicRequires = [];
-      for (var i = 0; i < names.length; i++)
-        dynamicRequires.push(loader['import'](names[i], referer));
-      Promise.all(dynamicRequires).then(function(modules) {
-        if (callback)
-          callback.apply(null, modules);
-      }, errback);
-    }
-
-    // commonjs require
-    else if (typeof names == 'string') {
-      var module = loader.get(names);
-      return module.__useDefault ? module['default'] : module;
-    }
-
-    else
-      throw new TypeError('Invalid require');
-  };
-
-  function define(name, deps, factory) {
-    if (typeof name != 'string') {
-      factory = deps;
-      deps = name;
-      name = null;
-    }
-    if (!(deps instanceof Array)) {
-      factory = deps;
-      deps = ['require', 'exports', 'module'].splice(0, factory.length);
-    }
-
-    if (typeof factory != 'function')
-      factory = (function(factory) {
-        return function() { return factory; }
-      })(factory);
-
-    // in IE8, a trailing comma becomes a trailing undefined entry
-    if (deps[deps.length - 1] === undefined)
-      deps.pop();
-
-    // remove system dependencies
-    var requireIndex, exportsIndex, moduleIndex;
-    
-    if ((requireIndex = indexOf.call(deps, 'require')) != -1) {
-      
-      deps.splice(requireIndex, 1);
-
-      // only trace cjs requires for non-named
-      // named defines assume the trace has already been done
-      if (!name)
-        deps = deps.concat(getCJSDeps(factory.toString(), requireIndex));
-    }
-
-    if ((exportsIndex = indexOf.call(deps, 'exports')) != -1)
-      deps.splice(exportsIndex, 1);
-    
-    if ((moduleIndex = indexOf.call(deps, 'module')) != -1)
-      deps.splice(moduleIndex, 1);
-
-    var define = {
-      name: name,
-      deps: deps,
-      execute: function(req, exports, module) {
-
-        var depValues = [];
-        for (var i = 0; i < deps.length; i++)
-          depValues.push(req(deps[i]));
-
-        module.uri = loader.baseURL + (module.id[0] == '/' ? module.id : '/' + module.id);
-
-        module.config = function() {};
-
-        // add back in system dependencies
-        if (moduleIndex != -1)
-          depValues.splice(moduleIndex, 0, module);
-        
-        if (exportsIndex != -1)
-          depValues.splice(exportsIndex, 0, exports);
-        
-        if (requireIndex != -1) 
-          depValues.splice(requireIndex, 0, function(names, callback, errback) {
-            if (typeof names == 'string' && typeof callback != 'function')
-              return req(names);
-            return require.call(loader, names, callback, errback, module.id);
-          });
-
-        // set global require to AMD require
-        var curRequire = __global.require;
-        __global.require = require;
-
-        var output = factory.apply(exportsIndex == -1 ? __global : exports, depValues);
-
-        __global.require = curRequire;
-
-        if (typeof output == 'undefined' && module)
-          output = module.exports;
-
-        if (typeof output != 'undefined')
-          return output;
-      }
-    };
-
-    // anonymous define
-    if (!name) {
-      // already defined anonymously -> throw
-      if (lastModule.anonDefine)
-        throw new TypeError('Multiple defines for anonymous module');
-      lastModule.anonDefine = define;
-    }
-    // named define
-    else {
-      // if it has no dependencies and we don't have any other
-      // defines, then let this be an anonymous define
-      // this is just to support single modules of the form:
-      // define('jquery')
-      // still loading anonymously
-      // because it is done widely enough to be useful
-      if (deps.length == 0 && !lastModule.anonDefine && !lastModule.isBundle) {
-        lastModule.anonDefine = define;
-      }
-      // otherwise its a bundle only
-      else {
-        // if there is an anonDefine already (we thought it could have had a single named define)
-        // then we define it now
-        // this is to avoid defining named defines when they are actually anonymous
-        if (lastModule.anonDefine && lastModule.anonDefine.name)
-          loader.registerDynamic(lastModule.anonDefine.name, lastModule.anonDefine.deps, false, lastModule.anonDefine.execute);
-
-        lastModule.anonDefine = null;
-      }
-
-      // note this is now a bundle
-      lastModule.isBundle = true;
-
-      // define the module through the register registry
-      loader.registerDynamic(name, define.deps, false, define.execute);
-    }
-  }
-  define.amd = {};
-
-  // adds define as a global (potentially just temporarily)
-  function createDefine(loader) {
-    lastModule.anonDefine = null;
-    lastModule.isBundle = false;
-
-    // ensure no NodeJS environment detection
-    var oldModule = __global.module;
-    var oldExports = __global.exports;
-    var oldDefine = __global.define;
-
-    __global.module = undefined;
-    __global.exports = undefined;
-    __global.define = define;
-
-    return function() {
-      __global.define = oldDefine;
-      __global.module = oldModule;
-      __global.exports = oldExports;
-    };
-  }
-
-  var lastModule = {
-    isBundle: false,
-    anonDefine: null
-  };
-
-  loader.set('@@amd-helpers', loader.newModule({
-    createDefine: createDefine,
-    require: require,
-    define: define,
-    lastModule: lastModule
-  }));
-  loader.amdDefine = define;
-  loader.amdRequire = require;
-})(typeof self != 'undefined' ? self : global);
-(function(__global) {
-  var hasOwnProperty = __global.hasOwnProperty;
-  var indexOf = Array.prototype.indexOf || function(item) {
-    for (var i = 0, l = this.length; i < l; i++)
-      if (this[i] === item)
-        return i;
-    return -1;
-  }
-
-  function readMemberExpression(p, value) {
-    var pParts = p.split('.');
-    while (pParts.length)
-      value = value[pParts.shift()];
-    return value;
-  }
-
-  // bare minimum ignores for IE8
-  var ignoredGlobalProps = ['_g', 'sessionStorage', 'localStorage', 'clipboardData', 'frames', 'external'];
-
-  var globalSnapshot;
-
-  function forEachGlobal(callback) {
-    if (Object.keys)
-      Object.keys(__global).forEach(callback);
-    else
-      for (var g in __global) {
-        if (!hasOwnProperty.call(__global, g))
-          continue;
-        callback(g);
-      }
-  }
-
-  function forEachGlobalValue(callback) {
-    forEachGlobal(function(globalName) {
-      if (indexOf.call(ignoredGlobalProps, globalName) != -1)
-        return;
-      try {
-        var value = __global[globalName];
-      }
-      catch (e) {
-        ignoredGlobalProps.push(globalName);
-      }
-      callback(globalName, value);
-    });
-  }
-
-  System.set('@@global-helpers', System.newModule({
-    prepareGlobal: function(moduleName, exportName, globals) {
-      // set globals
-      var oldGlobals;
-      if (globals) {
-        oldGlobals = {};
-        for (var g in globals) {
-          oldGlobals[g] = globals[g];
-          __global[g] = globals[g];
-        }
-      }
-
-      // store a complete copy of the global object in order to detect changes
-      if (!exportName) {
-        globalSnapshot = {};
-
-        forEachGlobalValue(function(name, value) {
-          globalSnapshot[name] = value;
-        });
-      }
-
-      // return function to retrieve global
-      return function() {
-        var globalValue;
-
-        if (exportName) {
-          globalValue = readMemberExpression(exportName, __global);
-        }
-        else {
-          var singleGlobal;
-          var multipleExports;
-          var exports = {};
-
-          forEachGlobalValue(function(name, value) {
-            if (globalSnapshot[name] === value)
-              return;
-            if (typeof value == 'undefined')
-              return;
-            exports[name] = value;
-
-            if (typeof singleGlobal != 'undefined') {
-              if (!multipleExports && singleGlobal !== value)
-                multipleExports = true;
-            }
-            else {
-              singleGlobal = value;
-            }
-          });
-          globalValue = multipleExports ? exports : singleGlobal;
-        }
-
-        // revert globals
-        if (oldGlobals) {
-          for (var g in oldGlobals)
-            __global[g] = oldGlobals[g];
-        }
-
-        return globalValue;
-      };
-    }
-  }));
-
-})(typeof self != 'undefined' ? self : global);
-
-System.registerDynamic("npm:core-js@0.9.18/library/modules/$.fw.js", [], true, function(require, exports, module) {
-  var global = this,
+"format register";
+System.register("npm:core-js@0.9.18/library/modules/$.fw", [], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
   module.exports = function($) {
@@ -728,8 +12,8 @@ System.registerDynamic("npm:core-js@0.9.18/library/modules/$.fw.js", [], true, f
   return module.exports;
 });
 
-System.registerDynamic("npm:babel-runtime@5.6.17/helpers/class-call-check.js", [], true, function(require, exports, module) {
-  var global = this,
+System.register("npm:babel-runtime@5.8.20/helpers/class-call-check", [], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
   "use strict";
@@ -743,8 +27,8 @@ System.registerDynamic("npm:babel-runtime@5.6.17/helpers/class-call-check.js", [
   return module.exports;
 });
 
-System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined.js", [], false, function(__require, __exports, __module) {
-  var _retrieveGlobal = System.get("@@global-helpers").prepareGlobal(__module.id, null, null);
+System.register("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined", [], false, function(__require, __exports, __module) {
+  System.get("@@global-helpers").prepareGlobal(__module.id, []);
   (function() {
     this.createjs = this.createjs || {};
     createjs.extend = function(subclass, superclass) {
@@ -875,11 +159,11 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       p.removeEventListener = function(type, listener, useCapture) {
         var listeners = useCapture ? this._captureListeners : this._listeners;
         if (!listeners) {
-          return;
+          return ;
         }
         var arr = listeners[type];
         if (!arr) {
-          return;
+          return ;
         }
         for (var i = 0,
             l = arr.length; i < l; i++) {
@@ -962,7 +246,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         if (eventObj && listeners) {
           var arr = listeners[eventObj.type];
           if (!arr || !(l = arr.length)) {
-            return;
+            return ;
           }
           try {
             eventObj.currentTarget = this;
@@ -1026,7 +310,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       Ticker.setInterval = function(interval) {
         Ticker._interval = interval;
         if (!Ticker._inited) {
-          return;
+          return ;
         }
         Ticker._setupTick();
       };
@@ -1055,7 +339,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       }
       Ticker.init = function() {
         if (Ticker._inited) {
-          return;
+          return ;
         }
         Ticker._inited = true;
         Ticker._times = [];
@@ -1130,7 +414,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       Ticker._setupTick = function() {
         if (Ticker._timerId != null) {
-          return;
+          return ;
         }
         var mode = Ticker.timingMode || (Ticker.useRAF && Ticker.RAF_SYNCHED);
         if (mode == Ticker.RAF_SYNCHED || mode == Ticker.RAF) {
@@ -1138,7 +422,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           if (f) {
             Ticker._timerId = f(mode == Ticker.RAF ? Ticker._handleRAF : Ticker._handleSynch);
             Ticker._raf = true;
-            return;
+            return ;
           }
         }
         Ticker._raf = false;
@@ -1580,7 +864,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       "use strict";
       function ButtonHelper(target, outLabel, overLabel, downLabel, play, hitArea, hitLabel) {
         if (!target.addEventListener) {
-          return;
+          return ;
         }
         this.target = target;
         this.overLabel = overLabel == null ? "over" : overLabel;
@@ -1604,7 +888,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       var p = ButtonHelper.prototype;
       p.setEnabled = function(value) {
         if (value == this._enabled) {
-          return;
+          return ;
         }
         var o = this.target;
         this._enabled = value;
@@ -1757,7 +1041,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
             o,
             a;
         if (data == null) {
-          return;
+          return ;
         }
         this.framerate = data.framerate || 0;
         if (data.images && (l = data.images.length) > 0) {
@@ -1855,7 +1139,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p._calculateFrames = function() {
         if (this._frames || this._frameWidth == 0) {
-          return;
+          return ;
         }
         this._frames = [];
         var maxFrames = this._numFrames || 100000;
@@ -2348,7 +1632,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       }).prototype;
       p.exec = function(ctx) {
         if (!this.style) {
-          return;
+          return ;
         }
         ctx.fillStyle = this.style;
         var mtx = this.matrix;
@@ -2415,7 +1699,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       }).prototype;
       p.exec = function(ctx) {
         if (!this.style) {
-          return;
+          return ;
         }
         ctx.strokeStyle = this.style;
         if (this.ignoreScale) {
@@ -2873,7 +2157,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p._applyFilters = function() {
         if (!this.filters || this.filters.length == 0 || !this.cacheCanvas) {
-          return;
+          return ;
         }
         var l = this.filters.length;
         var ctx = this.cacheCanvas.getContext("2d");
@@ -3115,7 +2399,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         var o1 = kids[index1];
         var o2 = kids[index2];
         if (!o1 || !o2) {
-          return;
+          return ;
         }
         kids[index1] = o2;
         kids[index2] = o1;
@@ -3137,7 +2421,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           }
         }
         if (i == l) {
-          return;
+          return ;
         }
         kids[index1] = child2;
         kids[index2] = child1;
@@ -3146,7 +2430,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         var kids = this.children,
             l = kids.length;
         if (child.parent != this || index < 0 || index >= l) {
-          return;
+          return ;
         }
         for (var i = 0; i < l; i++) {
           if (kids[i] == child) {
@@ -3154,7 +2438,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           }
         }
         if (i == l || i == index) {
-          return;
+          return ;
         }
         kids.splice(i, 1);
         kids.splice(index, 0, child);
@@ -3363,13 +2647,13 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       } catch (e) {}
       p.update = function(props) {
         if (!this.canvas) {
-          return;
+          return ;
         }
         if (this.tickOnUpdate) {
           this.tick(props);
         }
         if (this.dispatchEvent("drawstart", false, true) === false) {
-          return;
+          return ;
         }
         createjs.DisplayObject._snapToPixelEnabled = this.snapToPixelEnabled;
         var r = this.drawRect,
@@ -3395,7 +2679,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p.tick = function(props) {
         if (!this.tickEnabled || this.dispatchEvent("tickstart", false, true) === false) {
-          return;
+          return ;
         }
         var evtObj = new createjs.Event("tick");
         if (props) {
@@ -3415,7 +2699,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p.clear = function() {
         if (!this.canvas) {
-          return;
+          return ;
         }
         var ctx = this.canvas.getContext("2d");
         ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -3451,7 +2735,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         if (frequency == null) {
           frequency = 20;
         } else if (frequency <= 0) {
-          return;
+          return ;
         }
         var o = this;
         this._mouseOverIntervalID = setInterval(function() {
@@ -3555,10 +2839,10 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p._handlePointerMove = function(id, e, pageX, pageY, owner) {
         if (this._prevStage && owner === undefined) {
-          return;
+          return ;
         }
         if (!this.canvas) {
-          return;
+          return ;
         }
         var nextStage = this._nextStage,
             o = this._getPointerData(id);
@@ -3605,7 +2889,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         var nextStage = this._nextStage,
             o = this._getPointerData(id);
         if (this._prevStage && owner === undefined) {
-          return;
+          return ;
         }
         var target = null,
             oTarget = o.target;
@@ -3658,16 +2942,16 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p._testMouseOver = function(clear, owner, eventTarget) {
         if (this._prevStage && owner === undefined) {
-          return;
+          return ;
         }
         var nextStage = this._nextStage;
         if (!this._mouseOverIntervalID) {
           nextStage && nextStage._testMouseOver(clear, owner, eventTarget);
-          return;
+          return ;
         }
         var o = this._getPointerData(-1);
         if (!o || (!clear && this.mouseX == this._mouseOverX && this.mouseY == this._mouseOverY && this.mouseInBounds)) {
-          return;
+          return ;
         }
         var e = o.posEvtObj;
         var isEventTarget = eventTarget || e && (e.target == this.canvas);
@@ -3729,7 +3013,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       p._dispatchMouseEvent = function(target, type, bubbles, pointerId, o, nativeEvent, relatedTarget) {
         if (!target || (!bubbles && !target.hasEventListener(type))) {
-          return;
+          return ;
         }
         var evt = new createjs.MouseEvent(type, bubbles, false, o.x, o.y, nativeEvent, pointerId, pointerId === this._primaryPointerID || pointerId === -1, o.rawX, o.rawY, relatedTarget);
         target.dispatchEvent(evt);
@@ -3915,7 +3199,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           if (animFrame + frameDelta * speed >= l) {
             var next = animation.next;
             if (this._dispatchAnimationEnd(animation, frame, paused, next, l - 1)) {
-              return;
+              return ;
             } else if (next) {
               return this._goto(next, frameDelta - (l - animFrame) / speed);
             } else {
@@ -4213,7 +3497,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       BitmapText._spritePool = [];
       p.draw = function(ctx, ignoreCache) {
         if (this.DisplayObject_draw(ctx, ignoreCache)) {
-          return;
+          return ;
         }
         this._updateText();
         this.Container_draw(ctx, ignoreCache);
@@ -4280,7 +3564,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           }
         }
         if (!change) {
-          return;
+          return ;
         }
         var hasSpace = !!this._getFrame(" ", ss);
         if (!hasSpace && !spaceW) {
@@ -4346,7 +3630,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       }
       SpriteSheetUtils.addFlippedFrames = function(spriteSheet, horizontal, vertical, both) {
         if (!horizontal && !vertical && !both) {
-          return;
+          return ;
         }
         var count = 0;
         if (horizontal) {
@@ -4524,7 +3808,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           rect = source.getBounds();
         }
         if (!rect && !rects) {
-          return;
+          return ;
         }
         var i,
             l,
@@ -4778,7 +4062,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       p._handleDrawEnd = function(evt) {
         var o = this.htmlElement;
         if (!o) {
-          return;
+          return ;
         }
         var style = o.style;
         var props = this.getConcatenatedDisplayProps(this._props),
@@ -4788,7 +4072,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
           style.visibility = visibility;
         }
         if (!props.visible) {
-          return;
+          return ;
         }
         var oldProps = this._oldProps,
             oldMtx = oldProps && oldProps.matrix;
@@ -5428,7 +4712,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       Touch.disable = function(stage) {
         if (!stage) {
-          return;
+          return ;
         }
         if ('ontouchstart' in window) {
           Touch._IOS_disable(stage);
@@ -5450,7 +4734,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       Touch._IOS_disable = function(stage) {
         var canvas = stage.canvas;
         if (!canvas) {
-          return;
+          return ;
         }
         var f = stage.__touch.f;
         canvas.removeEventListener("touchstart", f, false);
@@ -5460,7 +4744,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       Touch._IOS_handleEvent = function(stage, e) {
         if (!stage) {
-          return;
+          return ;
         }
         if (stage.__touch.preventDefault) {
           e.preventDefault && e.preventDefault();
@@ -5527,7 +4811,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       Touch._IE_handleEvent = function(stage, e) {
         if (!stage) {
-          return;
+          return ;
         }
         if (stage.__touch.preventDefault) {
           e.preventDefault && e.preventDefault();
@@ -5537,7 +4821,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         var ids = stage.__touch.activeIDs;
         if (type == "MSPointerDown" || type == "pointerdown") {
           if (e.srcElement != stage.canvas) {
-            return;
+            return ;
           }
           ids[id] = true;
           this._handleStart(stage, id, e, e.pageX, e.pageY);
@@ -5553,11 +4837,11 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       Touch._handleStart = function(stage, id, e, x, y) {
         var props = stage.__touch;
         if (!props.multitouch && props.count) {
-          return;
+          return ;
         }
         var ids = props.pointers;
         if (ids[id]) {
-          return;
+          return ;
         }
         ids[id] = true;
         props.count++;
@@ -5565,7 +4849,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       };
       Touch._handleMove = function(stage, id, e, x, y) {
         if (!stage.__touch.pointers[id]) {
-          return;
+          return ;
         }
         stage._handlePointerMove(id, e, x, y);
       };
@@ -5573,7 +4857,7 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
         var props = stage.__touch;
         var ids = props.pointers;
         if (!ids[id]) {
-          return;
+          return ;
         }
         props.count--;
         stage._handlePointerUp(id, e, true);
@@ -5588,12 +4872,12 @@ System.registerDynamic("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined
       s.version = "0.8.1";
       s.buildDate = "Thu, 21 May 2015 16:17:39 GMT";
     })();
-  })();
-  return _retrieveGlobal();
+  }).call(System.global);
+  return System.get("@@global-helpers").retrieveGlobal(__module.id, false);
 });
 
-System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined.js", [], false, function(__require, __exports, __module) {
-  var _retrieveGlobal = System.get("@@global-helpers").prepareGlobal(__module.id, null, null);
+System.register("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined", [], false, function(__require, __exports, __module) {
+  System.get("@@global-helpers").prepareGlobal(__module.id, []);
   (function() {
     this.createjs = this.createjs || {};
     createjs.extend = function(subclass, superclass) {
@@ -5713,11 +4997,11 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       p.removeEventListener = function(type, listener, useCapture) {
         var listeners = useCapture ? this._captureListeners : this._listeners;
         if (!listeners) {
-          return;
+          return ;
         }
         var arr = listeners[type];
         if (!arr) {
-          return;
+          return ;
         }
         for (var i = 0,
             l = arr.length; i < l; i++) {
@@ -5800,7 +5084,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
         if (eventObj && listeners) {
           var arr = listeners[eventObj.type];
           if (!arr || !(l = arr.length)) {
-            return;
+            return ;
           }
           try {
             eventObj.currentTarget = this;
@@ -5864,7 +5148,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       Ticker.setInterval = function(interval) {
         Ticker._interval = interval;
         if (!Ticker._inited) {
-          return;
+          return ;
         }
         Ticker._setupTick();
       };
@@ -5893,7 +5177,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       }
       Ticker.init = function() {
         if (Ticker._inited) {
-          return;
+          return ;
         }
         Ticker._inited = true;
         Ticker._times = [];
@@ -5968,7 +5252,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       };
       Ticker._setupTick = function() {
         if (Ticker._timerId != null) {
-          return;
+          return ;
         }
         var mode = Ticker.timingMode || (Ticker.useRAF && Ticker.RAF_SYNCHED);
         if (mode == Ticker.RAF_SYNCHED || mode == Ticker.RAF) {
@@ -5976,7 +5260,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
           if (f) {
             Ticker._timerId = f(mode == Ticker.RAF ? Ticker._handleRAF : Ticker._handleSynch);
             Ticker._raf = true;
-            return;
+            return ;
           }
         }
         Ticker._raf = false;
@@ -6088,7 +5372,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       };
       Tween.removeTweens = function(target) {
         if (!target.tweenjs_count) {
-          return;
+          return ;
         }
         var tweens = Tween._tweens;
         for (var i = tweens.length - 1; i >= 0; i--) {
@@ -6272,7 +5556,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       };
       p.tick = function(delta) {
         if (this._paused) {
-          return;
+          return ;
         }
         this.setPosition(this._prevPosition + delta);
       };
@@ -6307,7 +5591,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
         } else {
           this.passive = !!step.v;
           if (this.passive) {
-            return;
+            return ;
           }
           if (step.e) {
             ratio = step.e(ratio, 0, 1, 1);
@@ -6896,7 +6180,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       MotionGuidePlugin.testRotData = function(tween, injectProps) {
         if (tween.__rotGlobalS === undefined || tween.__rotGlobalE === undefined) {
           if (tween.__needsRot) {
-            return;
+            return ;
           }
           if (tween._curQueueProps.rotation !== undefined) {
             tween.__rotGlobalS = tween.__rotGlobalE = tween._curQueueProps.rotation;
@@ -6905,7 +6189,7 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
           }
         }
         if (tween.__guideData === undefined) {
-          return;
+          return ;
         }
         var data = tween.__guideData;
         var rotGlobalD = tween.__rotGlobalE - tween.__rotGlobalS;
@@ -7009,12 +6293,12 @@ System.registerDynamic("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined
       s.version = "0.6.1";
       s.buildDate = "Thu, 21 May 2015 16:17:37 GMT";
     })();
-  })();
-  return _retrieveGlobal();
+  }).call(System.global);
+  return System.get("@@global-helpers").retrieveGlobal(__module.id, false);
 });
 
 (function() {
-var _removeDefine = System.get("@@amd-helpers").createDefine();
+function define(){};  define.amd = {};
 (function(window, document, exportName, undefined) {
   'use strict';
   var VENDOR_PREFIXES = ['', 'webkit', 'moz', 'MS', 'ms', 'o'];
@@ -7036,7 +6320,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
   function each(obj, iterator, context) {
     var i;
     if (!obj) {
-      return;
+      return ;
     }
     if (obj.forEach) {
       obj.forEach(iterator, context);
@@ -7434,7 +6718,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
         eventType = INPUT_END;
       }
       if (!this.pressed || !this.allow) {
-        return;
+        return ;
       }
       if (eventType & INPUT_END) {
         this.pressed = false;
@@ -7488,7 +6772,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
         removePointer = true;
       }
       if (storeIndex < 0) {
-        return;
+        return ;
       }
       store[storeIndex] = ev;
       this.callback(this.manager, eventType, {
@@ -7521,7 +6805,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
         this.started = true;
       }
       if (!this.started) {
-        return;
+        return ;
       }
       var touches = normalizeSingleTouches.call(this, ev, type);
       if (type & (INPUT_END | INPUT_CANCEL) && touches[0].length - touches[1].length === 0) {
@@ -7558,7 +6842,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
       var type = TOUCH_INPUT_MAP[ev.type];
       var touches = getTouches.call(this, ev, type);
       if (!touches) {
-        return;
+        return ;
       }
       this.callback(this.manager, type, {
         pointers: touches[0],
@@ -7600,7 +6884,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
       i++;
     }
     if (!changedTargetTouches.length) {
-      return;
+      return ;
     }
     return [uniqueArray(targetTouches.concat(changedTargetTouches), 'identifier', true), changedTargetTouches];
   }
@@ -7617,7 +6901,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
       if (isTouch) {
         this.mouse.allow = false;
       } else if (isMouse && !this.mouse.allow) {
-        return;
+        return ;
       }
       if (inputEvent & (INPUT_END | INPUT_CANCEL)) {
         this.mouse.allow = true;
@@ -7665,13 +6949,13 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
     },
     preventDefaults: function(input) {
       if (NATIVE_TOUCH_ACTION) {
-        return;
+        return ;
       }
       var srcEvent = input.srcEvent;
       var direction = input.offsetDirection;
       if (this.manager.session.prevented) {
         srcEvent.preventDefault();
-        return;
+        return ;
       }
       var actions = this.actions;
       var hasNone = inStr(actions, TOUCH_ACTION_NONE);
@@ -7810,7 +7094,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
       if (!boolOrFn(this.options.enable, [this, inputDataClone])) {
         this.reset();
         this.state = STATE_FAILED;
-        return;
+        return ;
       }
       if (this.state & (STATE_RECOGNIZED | STATE_CANCELLED | STATE_FAILED)) {
         this.state = STATE_POSSIBLE;
@@ -8001,7 +7285,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
     },
     emit: function(input) {
       if (this.state !== STATE_RECOGNIZED) {
-        return;
+        return ;
       }
       if (input && (input.eventType & INPUT_END)) {
         this.manager.emit(this.options.event + 'up', input);
@@ -8199,7 +7483,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
     recognize: function(inputData) {
       var session = this.session;
       if (session.stopped) {
-        return;
+        return ;
       }
       this.touchAction.preventDefaults(inputData);
       var recognizer;
@@ -8282,7 +7566,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
       }
       var handlers = this.handlers[event] && this.handlers[event].slice();
       if (!handlers || !handlers.length) {
-        return;
+        return ;
       }
       data.type = event;
       data.preventDefault = function() {
@@ -8360,7 +7644,7 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
     prefixed: prefixed
   });
   if (typeof define == TYPE_FUNCTION && define.amd) {
-    define("github:hammerjs/hammer.js@2.0.4/hammer.js", [], function() {
+    System.register("github:hammerjs/hammer.js@2.0.4/hammer", [], false, function() {
       return Hammer;
     });
   } else if (typeof module != 'undefined' && module.exports) {
@@ -8369,11 +7653,124 @@ var _removeDefine = System.get("@@amd-helpers").createDefine();
     window[exportName] = Hammer;
   }
 })(window, document, 'Hammer');
-
-_removeDefine();
 })();
-System.registerDynamic("npm:core-js@0.9.18/library/modules/$.js", ["npm:core-js@0.9.18/library/modules/$.fw.js"], true, function(require, exports, module) {
-  var global = this,
+System.register("github:mrdoob/stats.js@master/src/Stats", [], true, function(require, exports, module) {
+  var global = System.global,
+      __define = global.define;
+  global.define = undefined;
+  var Stats = function() {
+    var now = (self.performance && self.performance.now) ? self.performance.now.bind(performance) : Date.now;
+    var startTime = now(),
+        prevTime = startTime;
+    var frames = 0,
+        mode = 0;
+    function createElement(tag, id, css) {
+      var element = document.createElement(tag);
+      element.id = id;
+      element.style.cssText = css;
+      return element;
+    }
+    function createPanel(id, fg, bg) {
+      var div = createElement('div', id, 'padding:0 0 3px 3px;text-align:left;background:' + bg);
+      var text = createElement('div', id + 'Text', 'font-family:Helvetica,Arial,sans-serif;font-size:9px;font-weight:bold;line-height:15px;color:' + fg);
+      text.innerHTML = id.toUpperCase();
+      div.appendChild(text);
+      var graph = createElement('div', id + 'Graph', 'width:74px;height:30px;background:' + fg);
+      div.appendChild(graph);
+      for (var i = 0; i < 74; i++) {
+        graph.appendChild(createElement('span', '', 'width:1px;height:30px;float:left;opacity:0.9;background:' + bg));
+      }
+      return div;
+    }
+    function setMode(value) {
+      var children = container.children;
+      for (var i = 0; i < children.length; i++) {
+        children[i].style.display = i === value ? 'block' : 'none';
+      }
+      mode = value;
+    }
+    function updateGraph(dom, value) {
+      var child = dom.appendChild(dom.firstChild);
+      child.style.height = Math.min(30, 30 - value * 30) + 'px';
+    }
+    var container = createElement('div', 'stats', 'width:80px;opacity:0.9;cursor:pointer');
+    container.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      setMode(++mode % container.children.length);
+    }, false);
+    var fps = 0,
+        fpsMin = Infinity,
+        fpsMax = 0;
+    var fpsDiv = createPanel('fps', '#0ff', '#002');
+    var fpsText = fpsDiv.children[0];
+    var fpsGraph = fpsDiv.children[1];
+    container.appendChild(fpsDiv);
+    var ms = 0,
+        msMin = Infinity,
+        msMax = 0;
+    var msDiv = createPanel('ms', '#0f0', '#020');
+    var msText = msDiv.children[0];
+    var msGraph = msDiv.children[1];
+    container.appendChild(msDiv);
+    if (self.performance && self.performance.memory) {
+      var mem = 0,
+          memMin = Infinity,
+          memMax = 0;
+      var memDiv = createPanel('mb', '#f08', '#201');
+      var memText = memDiv.children[0];
+      var memGraph = memDiv.children[1];
+      container.appendChild(memDiv);
+    }
+    setMode(mode);
+    return {
+      REVISION: 14,
+      domElement: container,
+      setMode: setMode,
+      begin: function() {
+        startTime = now();
+      },
+      end: function() {
+        var time = now();
+        ms = time - startTime;
+        msMin = Math.min(msMin, ms);
+        msMax = Math.max(msMax, ms);
+        msText.textContent = (ms | 0) + ' MS (' + (msMin | 0) + '-' + (msMax | 0) + ')';
+        updateGraph(msGraph, ms / 200);
+        frames++;
+        if (time > prevTime + 1000) {
+          fps = Math.round((frames * 1000) / (time - prevTime));
+          fpsMin = Math.min(fpsMin, fps);
+          fpsMax = Math.max(fpsMax, fps);
+          fpsText.textContent = fps + ' FPS (' + fpsMin + '-' + fpsMax + ')';
+          updateGraph(fpsGraph, fps / 100);
+          prevTime = time;
+          frames = 0;
+          if (mem !== undefined) {
+            var heapSize = performance.memory.usedJSHeapSize;
+            var heapSizeLimit = performance.memory.jsHeapSizeLimit;
+            mem = Math.round(heapSize * 0.000000954);
+            memMin = Math.min(memMin, mem);
+            memMax = Math.max(memMax, mem);
+            memText.textContent = mem + ' MB (' + memMin + '-' + memMax + ')';
+            updateGraph(memGraph, heapSize / heapSizeLimit);
+          }
+        }
+        return time;
+      },
+      update: function() {
+        startTime = this.end();
+      }
+    };
+  };
+  if (typeof module === 'object') {
+    module.exports = Stats;
+  }
+  global.define = __define;
+  return module.exports;
+});
+
+System.register("npm:core-js@0.9.18/library/modules/$", ["npm:core-js@0.9.18/library/modules/$.fw"], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
   'use strict';
@@ -8424,7 +7821,7 @@ System.registerDynamic("npm:core-js@0.9.18/library/modules/$.js", ["npm:core-js@
       throw TypeError("Can't call method on  " + it);
     return it;
   }
-  var $ = module.exports = require("npm:core-js@0.9.18/library/modules/$.fw.js")({
+  var $ = module.exports = require("npm:core-js@0.9.18/library/modules/$.fw")({
     g: global,
     core: core,
     html: global.document && document.documentElement,
@@ -8472,37 +7869,46 @@ System.registerDynamic("npm:core-js@0.9.18/library/modules/$.js", ["npm:core-js@
   return module.exports;
 });
 
-System.registerDynamic("github:CreateJS/EaselJS@0.8.1.js", ["github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined.js"], true, function(require, exports, module) {
-  var global = this,
+System.register("github:CreateJS/EaselJS@0.8.1", ["github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined"], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
-  module.exports = require("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined.js");
+  module.exports = require("github:CreateJS/EaselJS@0.8.1/lib/easeljs-0.8.1.combined");
   global.define = __define;
   return module.exports;
 });
 
-System.registerDynamic("github:CreateJS/TweenJS@0.6.1.js", ["github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined.js"], true, function(require, exports, module) {
-  var global = this,
+System.register("github:CreateJS/TweenJS@0.6.1", ["github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined"], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
-  module.exports = require("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined.js");
+  module.exports = require("github:CreateJS/TweenJS@0.6.1/lib/tweenjs-0.6.1.combined");
   global.define = __define;
   return module.exports;
 });
 
 (function() {
-var _removeDefine = System.get("@@amd-helpers").createDefine();
-define("github:hammerjs/hammer.js@2.0.4.js", ["github:hammerjs/hammer.js@2.0.4/hammer.js"], function(main) {
-  return main;
+function define(){};  define.amd = {};
+System.register("github:hammerjs/hammer.js@2.0.4", ["github:hammerjs/hammer.js@2.0.4/hammer"], false, function(__require, __exports, __module) {
+  return (function(main) {
+    return main;
+  }).call(this, __require('github:hammerjs/hammer.js@2.0.4/hammer'));
 });
-
-_removeDefine();
 })();
-System.registerDynamic("npm:core-js@0.9.18/library/fn/object/define-property.js", ["npm:core-js@0.9.18/library/modules/$.js"], true, function(require, exports, module) {
-  var global = this,
+System.register("github:mrdoob/stats.js@master", ["github:mrdoob/stats.js@master/src/Stats"], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
-  var $ = require("npm:core-js@0.9.18/library/modules/$.js");
+  module.exports = require("github:mrdoob/stats.js@master/src/Stats");
+  global.define = __define;
+  return module.exports;
+});
+
+System.register("npm:core-js@0.9.18/library/fn/object/define-property", ["npm:core-js@0.9.18/library/modules/$"], true, function(require, exports, module) {
+  var global = System.global,
+      __define = global.define;
+  global.define = undefined;
+  var $ = require("npm:core-js@0.9.18/library/modules/$");
   module.exports = function defineProperty(it, key, desc) {
     return $.setDesc(it, key, desc);
   };
@@ -8510,24 +7916,24 @@ System.registerDynamic("npm:core-js@0.9.18/library/fn/object/define-property.js"
   return module.exports;
 });
 
-System.registerDynamic("npm:babel-runtime@5.6.17/core-js/object/define-property.js", ["npm:core-js@0.9.18/library/fn/object/define-property.js"], true, function(require, exports, module) {
-  var global = this,
+System.register("npm:babel-runtime@5.8.20/core-js/object/define-property", ["npm:core-js@0.9.18/library/fn/object/define-property"], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
   module.exports = {
-    "default": require("npm:core-js@0.9.18/library/fn/object/define-property.js"),
+    "default": require("npm:core-js@0.9.18/library/fn/object/define-property"),
     __esModule: true
   };
   global.define = __define;
   return module.exports;
 });
 
-System.registerDynamic("npm:babel-runtime@5.6.17/helpers/create-class.js", ["npm:babel-runtime@5.6.17/core-js/object/define-property.js"], true, function(require, exports, module) {
-  var global = this,
+System.register("npm:babel-runtime@5.8.20/helpers/create-class", ["npm:babel-runtime@5.8.20/core-js/object/define-property"], true, function(require, exports, module) {
+  var global = System.global,
       __define = global.define;
   global.define = undefined;
   "use strict";
-  var _Object$defineProperty = require("npm:babel-runtime@5.6.17/core-js/object/define-property.js")["default"];
+  var _Object$defineProperty = require("npm:babel-runtime@5.8.20/core-js/object/define-property")["default"];
   exports["default"] = (function() {
     function defineProperties(target, props) {
       for (var i = 0; i < props.length; i++) {
@@ -8552,16 +7958,16 @@ System.registerDynamic("npm:babel-runtime@5.6.17/helpers/create-class.js", ["npm
   return module.exports;
 });
 
-System.register("src/Hotspot.js", ["npm:babel-runtime@5.6.17/helpers/create-class.js", "npm:babel-runtime@5.6.17/helpers/class-call-check.js", "github:hammerjs/hammer.js@2.0.4.js"], function (_export) {
+System.register("src/Hotspot", ["npm:babel-runtime@5.8.20/helpers/create-class", "npm:babel-runtime@5.8.20/helpers/class-call-check", "github:hammerjs/hammer.js@2.0.4"], function (_export) {
     var _createClass, _classCallCheck, Hammer, Hotspot;
 
     return {
-        setters: [function (_npmBabelRuntime5617HelpersCreateClassJs) {
-            _createClass = _npmBabelRuntime5617HelpersCreateClassJs["default"];
-        }, function (_npmBabelRuntime5617HelpersClassCallCheckJs) {
-            _classCallCheck = _npmBabelRuntime5617HelpersClassCallCheckJs["default"];
-        }, function (_githubHammerjsHammerJs204Js) {
-            Hammer = _githubHammerjsHammerJs204Js;
+        setters: [function (_npmBabelRuntime5820HelpersCreateClass) {
+            _createClass = _npmBabelRuntime5820HelpersCreateClass["default"];
+        }, function (_npmBabelRuntime5820HelpersClassCallCheck) {
+            _classCallCheck = _npmBabelRuntime5820HelpersClassCallCheck["default"];
+        }, function (_githubHammerjsHammerJs204) {
+            Hammer = _githubHammerjsHammerJs204;
         }],
         execute: function () {
             "use strict";
@@ -8627,16 +8033,58 @@ System.register("src/Hotspot.js", ["npm:babel-runtime@5.6.17/helpers/create-clas
         }
     };
 });
-System.register("src/Pages.js", ["npm:babel-runtime@5.6.17/helpers/create-class.js", "npm:babel-runtime@5.6.17/helpers/class-call-check.js", "src/Hotspot.js"], function (_export) {
+System.register('src/Statistics', ['npm:babel-runtime@5.8.20/helpers/create-class', 'npm:babel-runtime@5.8.20/helpers/class-call-check', 'github:mrdoob/stats.js@master'], function (_export) {
+    var _createClass, _classCallCheck, Stats, Statistics;
+
+    return {
+        setters: [function (_npmBabelRuntime5820HelpersCreateClass) {
+            _createClass = _npmBabelRuntime5820HelpersCreateClass['default'];
+        }, function (_npmBabelRuntime5820HelpersClassCallCheck) {
+            _classCallCheck = _npmBabelRuntime5820HelpersClassCallCheck['default'];
+        }, function (_githubMrdoobStatsJsMaster) {
+            Stats = _githubMrdoobStatsJsMaster['default'];
+        }],
+        execute: function () {
+            'use strict';
+
+            Statistics = (function () {
+                function Statistics() {
+                    _classCallCheck(this, Statistics);
+
+                    this.statsjs = new Stats();
+
+                    this.statsjs.domElement.style.cssText = 'position:fixed;left:0;top:0;z-index:10000';
+
+                    document.body.appendChild(this.statsjs.domElement);
+
+                    requestAnimationFrame(this.updateStats.bind(this));
+                }
+
+                _createClass(Statistics, [{
+                    key: 'updateStats',
+                    value: function updateStats() {
+                        this.statsjs.update();
+                        requestAnimationFrame(this.updateStats.bind(this));
+                    }
+                }]);
+
+                return Statistics;
+            })();
+
+            _export('Statistics', Statistics);
+        }
+    };
+});
+System.register("src/Pages", ["npm:babel-runtime@5.8.20/helpers/create-class", "npm:babel-runtime@5.8.20/helpers/class-call-check", "src/Hotspot"], function (_export) {
     var _createClass, _classCallCheck, Hotspot, Pages;
 
     return {
-        setters: [function (_npmBabelRuntime5617HelpersCreateClassJs) {
-            _createClass = _npmBabelRuntime5617HelpersCreateClassJs["default"];
-        }, function (_npmBabelRuntime5617HelpersClassCallCheckJs) {
-            _classCallCheck = _npmBabelRuntime5617HelpersClassCallCheckJs["default"];
-        }, function (_srcHotspotJs) {
-            Hotspot = _srcHotspotJs.Hotspot;
+        setters: [function (_npmBabelRuntime5820HelpersCreateClass) {
+            _createClass = _npmBabelRuntime5820HelpersCreateClass["default"];
+        }, function (_npmBabelRuntime5820HelpersClassCallCheck) {
+            _classCallCheck = _npmBabelRuntime5820HelpersClassCallCheck["default"];
+        }, function (_srcHotspot) {
+            Hotspot = _srcHotspot.Hotspot;
         }],
         execute: function () {
             "use strict";
@@ -8703,14 +8151,12 @@ System.register("src/Pages.js", ["npm:babel-runtime@5.6.17/helpers/create-class.
         }
     };
 });
-System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.js', 'npm:babel-runtime@5.6.17/helpers/class-call-check.js', 'github:CreateJS/EaselJS@0.8.1.js', 'github:CreateJS/TweenJS@0.6.1.js', 'src/Pages.js', 'github:hammerjs/hammer.js@2.0.4.js'], function (_export) {
-    var _createClass, _classCallCheck, EaselJS, TweenJS, Pages, Hammer, Main;
+System.register('src/Main', ['npm:babel-runtime@5.8.20/helpers/create-class', 'npm:babel-runtime@5.8.20/helpers/class-call-check', 'github:CreateJS/EaselJS@0.8.1', 'github:CreateJS/TweenJS@0.6.1', 'src/Pages', 'github:hammerjs/hammer.js@2.0.4', 'src/Statistics'], function (_export) {
+    var _createClass, _classCallCheck, EaselJS, TweenJS, Pages, Hammer, Statistics, Main;
 
     function initCanvas() {
         var canvasElement = document.getElementById('demoCanvas');
-        //canvasElement.width = window.innerWidth * window.devicePixelRatio;
         canvasElement.width = window.innerWidth * 2;
-        //canvasElement.height = window.innerHeight * window.devicePixelRatio;
         canvasElement.height = window.innerHeight * 2;
         canvasElement.style.width = window.innerWidth;
         canvasElement.style.height = window.innerHeight;
@@ -8718,18 +8164,20 @@ System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.j
     }
 
     return {
-        setters: [function (_npmBabelRuntime5617HelpersCreateClassJs) {
-            _createClass = _npmBabelRuntime5617HelpersCreateClassJs['default'];
-        }, function (_npmBabelRuntime5617HelpersClassCallCheckJs) {
-            _classCallCheck = _npmBabelRuntime5617HelpersClassCallCheckJs['default'];
-        }, function (_githubCreateJSEaselJS081Js) {
-            EaselJS = _githubCreateJSEaselJS081Js.EaselJS;
-        }, function (_githubCreateJSTweenJS061Js) {
-            TweenJS = _githubCreateJSTweenJS061Js.TweenJS;
-        }, function (_srcPagesJs) {
-            Pages = _srcPagesJs.Pages;
-        }, function (_githubHammerjsHammerJs204Js) {
-            Hammer = _githubHammerjsHammerJs204Js;
+        setters: [function (_npmBabelRuntime5820HelpersCreateClass) {
+            _createClass = _npmBabelRuntime5820HelpersCreateClass['default'];
+        }, function (_npmBabelRuntime5820HelpersClassCallCheck) {
+            _classCallCheck = _npmBabelRuntime5820HelpersClassCallCheck['default'];
+        }, function (_githubCreateJSEaselJS081) {
+            EaselJS = _githubCreateJSEaselJS081.EaselJS;
+        }, function (_githubCreateJSTweenJS061) {
+            TweenJS = _githubCreateJSTweenJS061.TweenJS;
+        }, function (_srcPages) {
+            Pages = _srcPages.Pages;
+        }, function (_githubHammerjsHammerJs204) {
+            Hammer = _githubHammerjsHammerJs204;
+        }, function (_srcStatistics) {
+            Statistics = _srcStatistics.Statistics;
         }],
         execute: function () {
             'use strict';
@@ -8739,6 +8187,8 @@ System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.j
             Main = (function () {
                 function Main(canvas) {
                     _classCallCheck(this, Main);
+
+                    new Statistics();
 
                     this.pages = new Array(6);
                     this.pagesCount = 0;
@@ -8757,7 +8207,7 @@ System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.j
                     createjs.Touch.enable(this.stage);
                     createjs.Ticker.timingMode = createjs.Ticker.RAF;
                     createjs.Ticker.setFPS(30);
-                    createjs.Ticker.addEventListener('tick', this.stage);
+                    createjs.Ticker.addEventListener("tick", this.stage);
 
                     this.initHammer();
                     this.loadPages();
@@ -8766,8 +8216,8 @@ System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.j
                 _createClass(Main, [{
                     key: 'initHammer',
                     value: function initHammer() {
-                        var mc = new Hammer.Manager(this.canvas, {
-                            recognizers: [[Hammer.Swipe], [Hammer.Tap], [Hammer.Pan], [Hammer.Pinch]]
+                        var mc = new Hammer['default'].Manager(this.canvas, {
+                            recognizers: [[Hammer['default'].Swipe], [Hammer['default'].Tap], [Hammer['default'].Pan], [Hammer['default'].Pinch]]
                         });
 
                         mc.on('swipe', this.onSwipe.bind(this));
@@ -8780,7 +8230,7 @@ System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.j
                     value: function loadPages() {
                         for (var i = 0; i < this.pages.length; i++) {
                             this.pages[i] = new Image();
-                            this.pages[i].src = 'img/page_' + (i + 1) + '.png';
+                            this.pages[i].src = "img/page_" + (i + 1) + ".png";
                             this.pages[i].onload = this.onImageLoad.bind(this);
                         }
                     }
@@ -8844,25 +8294,5 @@ System.register('src/Main.js', ['npm:babel-runtime@5.6.17/helpers/create-class.j
             _export('Main', Main);
         }
     };
-});
-System.register('src/App.js', ['src/Main.js'], function (_export) {
-    'use strict';
-
-    var Main, initCanvas;
-    return {
-        setters: [function (_srcMainJs) {
-            Main = _srcMainJs.Main;
-            initCanvas = _srcMainJs.initCanvas;
-        }],
-        execute: function () {
-            window.onload = function () {
-                new Main(initCanvas());
-            };
-        }
-    };
-});
-})
-(function(factory) {
-  factory();
 });
 //# sourceMappingURL=app.js.map
