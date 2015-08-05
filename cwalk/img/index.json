@@ -1,0 +1,40 @@
+{
+  "pages": [
+    {
+      "index": 1,
+      "source": "publications/test/page_1.png",
+      "originalWidth": 1862,
+      "originalHeight": 1862
+    },
+    {
+      "index": 2,
+      "source": "publications/test/page_2.png",
+      "originalWidth": 1862,
+      "originalHeight": 1862
+    },
+    {
+      "index": 3,
+      "source": "publications/test/page_3.png",
+      "originalWidth": 1862,
+      "originalHeight": 1862
+    },
+    {
+      "index": 4,
+      "source": "publications/test/page_4.png",
+      "originalWidth": 1862,
+      "originalHeight": 1862
+    },
+    {
+      "index": 5,
+      "source": "publications/test/page_5.png",
+      "originalWidth": 1862,
+      "originalHeight": 1862
+    },
+    {
+      "index": 6,
+      "source": "publications/test/page_6.png",
+      "originalWidth": 1862,
+      "originalHeight": 1862
+    }
+  ]
+}

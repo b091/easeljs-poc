@@ -35,11 +35,11 @@ export class Pages {
 
     static createPageContainer(picture, index) {
         let pageContainer = new createjs.Container();
-        let innerWidth = window.innerWidth * 2 / 2; // double page
-        let ratio = Math.min(innerWidth / picture.width, window.innerHeight * 2 / picture.height);
+        let innerWidth = window.innerWidth * window.devicePixelRatio / 2; // double page
+        let ratio = Math.min(innerWidth / picture.width, window.innerHeight * window.devicePixelRatio / picture.height);
         let rectWidth = ratio * picture.width;
 
-        pageContainer.scaleX = pageContainer.scaleY = window.innerHeight * 2 / picture.height;
+        pageContainer.scaleX = pageContainer.scaleY = window.innerHeight * window.devicePixelRatio / picture.height;
         pageContainer.x = (rectWidth + 10) * index;
         pageContainer.y = 0;
 

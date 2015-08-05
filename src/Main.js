@@ -107,8 +107,8 @@ export class Main {
 
 export function initCanvas() {
     var canvasElement = document.getElementById('demoCanvas');
-    canvasElement.width = window.innerWidth * 2;
-    canvasElement.height = window.innerHeight * 2;
+    canvasElement.width = window.innerWidth * window.devicePixelRatio;
+    canvasElement.height = window.innerHeight * window.devicePixelRatio;
     canvasElement.style.width = window.innerWidth;
     canvasElement.style.height = window.innerHeight;
     return canvasElement;
