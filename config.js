@@ -22,6 +22,7 @@ System.config({
     "babel-runtime": "npm:babel-runtime@5.8.20",
     "core-js": "npm:core-js@0.9.18",
     "hammer": "github:hammerjs/hammer.js@2.0.4",
+    "statsjs": "github:mrdoob/stats.js@master",
     "github:jspm/nodelibs-process@0.1.1": {
       "process": "npm:process@0.10.1"
     },
