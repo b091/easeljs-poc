@@ -8132,11 +8132,11 @@ System.register("src/Pages", ["npm:babel-runtime@5.8.20/helpers/create-class", "
                     key: "createPageContainer",
                     value: function createPageContainer(picture, index) {
                         var pageContainer = new createjs.Container();
-                        var innerWidth = window.innerWidth * 2 / 2; // double page
-                        var ratio = Math.min(innerWidth / picture.width, window.innerHeight * 2 / picture.height);
+                        var innerWidth = window.innerWidth * window.devicePixelRatio / 2; // double page
+                        var ratio = Math.min(innerWidth / picture.width, window.innerHeight * window.devicePixelRatio / picture.height);
                         var rectWidth = ratio * picture.width;
 
-                        pageContainer.scaleX = pageContainer.scaleY = window.innerHeight * 2 / picture.height;
+                        pageContainer.scaleX = pageContainer.scaleY = window.innerHeight * window.devicePixelRatio / picture.height;
                         pageContainer.x = (rectWidth + 10) * index;
                         pageContainer.y = 0;
 
@@ -8156,8 +8156,8 @@ System.register('src/Main', ['npm:babel-runtime@5.8.20/helpers/create-class', 'n
 
     function initCanvas() {
         var canvasElement = document.getElementById('demoCanvas');
-        canvasElement.width = window.innerWidth * 2;
-        canvasElement.height = window.innerHeight * 2;
+        canvasElement.width = window.innerWidth * window.devicePixelRatio;
+        canvasElement.height = window.innerHeight * window.devicePixelRatio;
         canvasElement.style.width = window.innerWidth;
         canvasElement.style.height = window.innerHeight;
         return canvasElement;
